@@ -194,7 +194,7 @@ Install/run the npm package by adding this to your MCP client's config
       "command": "npx",
       "args": ["-y", "@shopstr/mcp@0.1.0"],
       "env": {
-        "SHOPSTR_MCP_RELAYS": "wss://nos.lol,wss://relay.damus.io,wss://purplepag.es",
+        "SHOPSTR_MCP_RELAYS": "wss://nos.lol,wss://relay.damus.io",
         "SHOPSTR_MCP_LOG_LEVEL": "info"
       }
     }

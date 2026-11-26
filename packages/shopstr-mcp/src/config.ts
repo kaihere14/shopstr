@@ -1,9 +1,11 @@
 import { z } from "zod";
 
+// Relays that store kind 30402 listings. Profile-only relays such as
+// purplepag.es answer listing queries with nothing and would still count as
+// succeeded relays in coverage.
 export const DEFAULT_RELAYS = [
   "wss://nos.lol",
   "wss://relay.damus.io",
-  "wss://purplepag.es",
 ] as const;
 
 export const DEFAULT_NIP50_SEARCH_RELAYS = [] as const;

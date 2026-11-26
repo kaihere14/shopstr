@@ -26,11 +26,7 @@ test("validates relay URLs without credentials", () => {
 });
 
 test("parses relay lists with trimming, dedupe, and defaults", () => {
-  const expectedDefaultRelays = [
-    "wss://nos.lol",
-    "wss://relay.damus.io",
-    "wss://purplepag.es",
-  ];
+  const expectedDefaultRelays = ["wss://nos.lol", "wss://relay.damus.io"];
 
   assert.deepEqual(DEFAULT_RELAYS, expectedDefaultRelays);
   assert.deepEqual(DEFAULT_NIP50_SEARCH_RELAYS, []);
