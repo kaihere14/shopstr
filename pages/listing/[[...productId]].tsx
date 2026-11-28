@@ -1,4 +1,4 @@
-import { useState, useEffect, useContext, useMemo } from "react";
+import { useState, useEffect, useContext, useMemo, useRef } from "react";
 import { useRouter } from "next/router";
 import {
   Modal,
@@ -204,6 +204,7 @@ const Listing = ({ initialProductEvent }: ListingPageProps) => {
   const [showEventIdModal, setShowEventIdModal] = useState(false);
   const [sfSellerPubkey, setSfSellerPubkey] = useState("");
   const [isListingNotFound, setIsListingNotFound] = useState(false);
+  const shownListingKeyRef = useRef<string | null>(null);
 
   const [invoiceIsPaid, setInvoiceIsPaid] = useState(false);
   const [invoiceGenerationFailed, setInvoiceGenerationFailed] = useState(false);
@@ -388,6 +389,18 @@ const Listing = ({ initialProductEvent }: ListingPageProps) => {
       }
     }
 
+    // On client-side navigation between listings this page stays mounted, so
+    // for one render the route already names the new listing while
+    // productData is still the previous one. Canonicalizing then would
+    // redirect back to the previous listing and bounce between the two.
+    const productMatchesRoute =
+      (rawEvent?.id === productData.id &&
+        eventMatchesListingIdentifier(rawEvent, productIdString)) ||
+      findProductBySlug(productIdString, allParsed)?.id === productData.id;
+    if (!productMatchesRoute) {
+      return;
+    }
+
     const canonicalSlug = getListingSlug(productData, allParsed);
     if (canonicalSlug && productIdString !== canonicalSlug) {
       router.replace(`/listing/${canonicalSlug}`, undefined, {
@@ -404,6 +417,24 @@ const Listing = ({ initialProductEvent }: ListingPageProps) => {
     router.isReady,
     isZapsnag,
   ]);
+
+  // Opening another listing from this page (e.g. a recommendation) keeps the
+  // page mounted, and the app scrolls <body> rather than the window, so the
+  // router's scroll reset doesn't apply. Start each new listing at the top.
+  useEffect(() => {
+    if (!productData) return;
+    const listingKey = productData.d
+      ? `${productData.pubkey}:${productData.d}`
+      : productData.id;
+    if (
+      shownListingKeyRef.current !== null &&
+      shownListingKeyRef.current !== listingKey
+    ) {
+      document.body.scrollTop = 0;
+      document.documentElement.scrollTop = 0;
+    }
+    shownListingKeyRef.current = listingKey;
+  }, [productData]);
 
   return (
     <StorefrontThemeWrapper sellerPubkey={sfSellerPubkey}>

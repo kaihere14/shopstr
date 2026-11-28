@@ -185,18 +185,24 @@ const defaultOgMeta = {
   url: `/listing/${relayHintedIdentifier}`,
 };
 
-function renderListingPage({
-  initialProductEvent,
-  productEvents,
-  isLoading,
-  signerPubkey = "f".repeat(64),
-}: {
+type ListingPageTreeOptions = {
   initialProductEvent: NostrEvent | null;
   productEvents: NostrEvent[];
   isLoading: boolean;
   signerPubkey?: string;
-}) {
-  return render(
+};
+
+function renderListingPage(options: ListingPageTreeOptions) {
+  return render(listingPageTree(options));
+}
+
+function listingPageTree({
+  initialProductEvent,
+  productEvents,
+  isLoading,
+  signerPubkey = "f".repeat(64),
+}: ListingPageTreeOptions) {
+  return (
     <SignerContext.Provider
       value={{
         pubkey: signerPubkey,
@@ -427,5 +433,119 @@ describe("Listing page direct-load reconciliation", () => {
     );
     expect(screen.getByTestId("shopstr-spinner")).toBeInTheDocument();
     expect(screen.queryByText("Cold Load Listing")).not.toBeInTheDocument();
+  });
+
+  test("does not redirect back to the previous listing when navigating between listings", async () => {
+    const laptopEvent = createEvent({
+      id: "laptop-event-id",
+      title: "Lenovo Laptop",
+      dTag: "laptop",
+    });
+    const printerEvent = createEvent({
+      id: "printer-event-id",
+      title: "Lenovo Printer",
+      dTag: "printer",
+    });
+    const productEvents = [laptopEvent, printerEvent];
+
+    routerState = {
+      ...routerState,
+      query: { productId: ["Lenovo-Laptop"] },
+    };
+
+    const { rerender } = renderListingPage({
+      initialProductEvent: null,
+      productEvents,
+      isLoading: false,
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("checkout-card")).toHaveTextContent(
+        "Lenovo Laptop"
+      )
+    );
+
+    // Client-side navigation to a related listing keeps this page mounted.
+    routerState = {
+      ...routerState,
+      query: { productId: ["Lenovo-Printer"] },
+    };
+
+    rerender(
+      listingPageTree({
+        initialProductEvent: null,
+        productEvents,
+        isLoading: false,
+      })
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("checkout-card")).toHaveTextContent(
+        "Lenovo Printer"
+      )
+    );
+    expect(routerState.replace).not.toHaveBeenCalledWith(
+      "/listing/Lenovo-Laptop",
+      undefined,
+      expect.anything()
+    );
+  });
+
+  test("scrolls back to the top when switching to another listing", async () => {
+    const laptopEvent = createEvent({
+      id: "laptop-event-id",
+      title: "Lenovo Laptop",
+      dTag: "laptop",
+    });
+    const printerEvent = createEvent({
+      id: "printer-event-id",
+      title: "Lenovo Printer",
+      dTag: "printer",
+    });
+    const productEvents = [laptopEvent, printerEvent];
+    // The app scrolls <body>, not the window (see styles/globals.css).
+    const bodyScrollTopSetter = jest.spyOn(document.body, "scrollTop", "set");
+
+    try {
+      routerState = {
+        ...routerState,
+        query: { productId: ["Lenovo-Laptop"] },
+      };
+
+      const { rerender } = renderListingPage({
+        initialProductEvent: null,
+        productEvents,
+        isLoading: false,
+      });
+
+      await waitFor(() =>
+        expect(screen.getByTestId("checkout-card")).toHaveTextContent(
+          "Lenovo Laptop"
+        )
+      );
+      // A fresh page load keeps the browser's own scroll handling.
+      expect(bodyScrollTopSetter).not.toHaveBeenCalled();
+
+      routerState = {
+        ...routerState,
+        query: { productId: ["Lenovo-Printer"] },
+      };
+      rerender(
+        listingPageTree({
+          initialProductEvent: null,
+          productEvents,
+          isLoading: false,
+        })
+      );
+
+      await waitFor(() =>
+        expect(screen.getByTestId("checkout-card")).toHaveTextContent(
+          "Lenovo Printer"
+        )
+      );
+      expect(bodyScrollTopSetter).toHaveBeenCalledWith(0);
+    } finally {
+      bodyScrollTopSetter.mockRestore();
+    }
   });
 });
