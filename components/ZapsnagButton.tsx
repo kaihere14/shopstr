@@ -26,6 +26,12 @@ import {
 import { generateSecretKey, getPublicKey } from "nostr-tools";
 import { SHOPSTRBUTTONCLASSNAMES } from "@/utils/STATIC-VARIABLES";
 import { ProductData } from "@/utils/parsers/product-parser-functions";
+import { isSatsCurrency } from "@/utils/parsers/zapsnag-parser";
+import {
+  minimumSaleAmountSats,
+  zapsnagAmountsAgree,
+  zapsnagPriceToSats,
+} from "@/utils/payments/zapsnag-amount";
 import { registerOrderParticipantsOnServer } from "@/utils/db/order-participants-client";
 import {
   validateZapReceipt,
@@ -112,6 +118,21 @@ async function resolveSellerZapContext(
   };
 }
 
+// The server converts the price again from the seller's signed note, so the
+// zap amount does not depend only on the rate this browser fetched.
+async function fetchServerAmountSats(product: ProductData): Promise<number> {
+  const response = await fetch("/api/listing/zapsnag-quote", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ productEvent: product.rawEvent }),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok || typeof body?.amountSats !== "number") {
+    throw new Error(body?.error || "Could not get the price in sats.");
+  }
+  return body.amountSats;
+}
+
 import { storage, STORAGE_KEYS } from "@/utils/storage";
 
 export default function ZapsnagButton({ product }: { product: ProductData }) {
@@ -120,6 +141,18 @@ export default function ZapsnagButton({ product }: { product: ProductData }) {
   const [status, setStatus] = useState("");
   const [soldCount, setSoldCount] = useState(0);
   const [isCheckingInventory, setIsCheckingInventory] = useState(true);
+  const isSatPriced = isSatsCurrency(product.currency);
+  const hasValidPrice = product.price !== undefined && product.price > 0;
+  // Fiat prices are converted to sats at the current rate.
+  const [fiatPriceSats, setFiatPriceSats] = useState<number | null>(null);
+  const [fiatPriceError, setFiatPriceError] = useState(false);
+  // What the buyer zaps.
+  const priceSats = !hasValidPrice
+    ? null
+    : isSatPriced
+      ? Math.ceil(product.price!)
+      : fiatPriceSats;
+  const priceError = !hasValidPrice || (!isSatPriced && fiatPriceError);
 
   const [shippingInfo, setShippingInfo] = useState({
     name: "",
@@ -150,21 +183,41 @@ export default function ZapsnagButton({ product }: { product: ProductData }) {
   }, []);
 
   useEffect(() => {
+    setFiatPriceSats(null);
+    setFiatPriceError(false);
+    if (isSatPriced || product.price === undefined || product.price <= 0) {
+      return;
+    }
+    let cancelled = false;
+    zapsnagPriceToSats(product.price, product.currency)
+      .then((sats) => {
+        if (!cancelled) setFiatPriceSats(sats);
+      })
+      .catch((e) => {
+        console.error("Failed to convert flash sale price", e);
+        if (!cancelled) setFiatPriceError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSatPriced, product.price, product.currency]);
+
+  useEffect(() => {
     const checkInventory = async () => {
       if (!nostrManager || !product.id) {
         setIsCheckingInventory(false);
         return;
       }
 
-      if (
-        !product.quantity ||
-        product.quantity <= 0 ||
-        product.price === undefined
-      ) {
+      if (!product.quantity || product.quantity <= 0 || priceError) {
         setIsCheckingInventory(false);
         return;
       }
-      const productPrice = product.price;
+      if (priceSats === null) return;
+      const minimumSaleSats = minimumSaleAmountSats(
+        priceSats,
+        product.currency
+      );
 
       try {
         const { zapRecipientPubkey } = await getSellerZapContext(
@@ -183,11 +236,12 @@ export default function ZapsnagButton({ product }: { product: ProductData }) {
             // the LNURL provider's signing key — accept both so zaps made
             // outside Shopstr still count toward inventory.
             alternateRecipientPubkeys: [product.pubkey],
-            expectedAmountSats: productPrice,
+            expectedAmountSats: minimumSaleSats,
             // Buyers may tip above the listed price; require at least the
             // product price so a forged "sale" still costs a real full-price
             // zap (prevents cheap sold-out griefing). Note: sales made
-            // before a price increase will no longer count.
+            // before a price increase will no longer count. Fiat prices
+            // allow some exchange rate drift, see minimumSaleAmountSats.
             allowOverpayment: true,
             minTimestamp: 0,
             skipFreshnessCheck: true,
@@ -204,8 +258,10 @@ export default function ZapsnagButton({ product }: { product: ProductData }) {
     checkInventory();
   }, [
     nostrManager,
+    priceError,
+    priceSats,
+    product.currency,
     product.id,
-    product.price,
     product.pubkey,
     product.quantity,
   ]);
@@ -223,15 +279,28 @@ export default function ZapsnagButton({ product }: { product: ProductData }) {
       return;
     }
 
-    if (product.price === undefined || product.price <= 0) {
+    if (priceSats === null) {
       alert("Could not determine a valid price. Cannot Zap.");
       return;
     }
-    const productPrice = product.price;
+    let productPrice = priceSats;
 
     setLoading(true);
-    setStatus("Finding seller address...");
     try {
+      if (!isSatPriced) {
+        setStatus("Checking the price in sats...");
+        const serverAmountSats = await fetchServerAmountSats(product);
+        if (!zapsnagAmountsAgree(priceSats, serverAmountSats)) {
+          setFiatPriceSats(serverAmountSats);
+          alert(
+            `The bitcoin price moved. The new total is ${serverAmountSats} sats. Please confirm again.`
+          );
+          return;
+        }
+        productPrice = serverAmountSats;
+      }
+
+      setStatus("Finding seller address...");
       const { lightningAddress: ln, zapRecipientPubkey } =
         await getSellerZapContext(nostrManager, product.pubkey);
 
@@ -370,15 +439,21 @@ export default function ZapsnagButton({ product }: { product: ProductData }) {
         className={`${SHOPSTRBUTTONCLASSNAMES} w-full text-lg font-bold disabled:opacity-50`}
         onClick={onOpen}
         startContent={!isSoldOut ? <BoltIcon className="h-6 w-6" /> : null}
-        isDisabled={isSoldOut || isCheckingInventory}
+        isDisabled={
+          isSoldOut || isCheckingInventory || priceSats === null || priceError
+        }
       >
-        {isCheckingInventory
-          ? "Checking Stock..."
-          : isSoldOut
-            ? "Sold Out"
-            : remaining !== null
-              ? `Zap to Buy (${remaining} left)`
-              : `Zap to Buy (${product.price} sats)`}
+        {priceError
+          ? "Price unavailable"
+          : priceSats === null
+            ? "Getting price..."
+            : isCheckingInventory
+              ? "Checking Stock..."
+              : isSoldOut
+                ? "Sold Out"
+                : remaining !== null
+                  ? `Zap to Buy (${remaining} left)`
+                  : `Zap to Buy (${priceSats} sats)`}
       </Button>
 
       <Modal isOpen={isOpen} onClose={onClose} size="2xl">
@@ -466,7 +541,12 @@ export default function ZapsnagButton({ product }: { product: ProductData }) {
             </div>
 
             <div className="py-6 text-center text-xl font-bold">
-              Total: {product.price} sats
+              Total: {priceSats} sats
+              {!isSatPriced && (
+                <span className="block text-sm font-normal text-gray-500">
+                  {product.price} {product.currency} at the current rate
+                </span>
+              )}
             </div>
 
             <Button

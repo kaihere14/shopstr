@@ -64,6 +64,7 @@ jest.mock("@heroicons/react/24/outline", () => ({
 }));
 
 const mockLightningAddressInstances: any[] = [];
+const mockGetSatoshiValue = jest.fn();
 
 jest.mock("@getalby/lightning-tools", () => {
   return {
@@ -76,6 +77,7 @@ jest.mock("@getalby/lightning-tools", () => {
       mockLightningAddressInstances.push(instance);
       return instance;
     }),
+    getSatoshiValue: (...args: unknown[]) => mockGetSatoshiValue(...args),
   };
 });
 
@@ -748,5 +750,159 @@ describe("ZapsnagButton Component", () => {
     expect(window.alert).not.toHaveBeenCalledWith(
       expect.stringContaining("No wallet connected")
     );
+  });
+
+  describe("flash sale priced in fiat", () => {
+    const fiatProduct = {
+      ...mockProduct,
+      price: 20,
+      currency: "USD",
+      rawEvent: { id: "item-123", kind: 1, content: "Price: 20 USD" },
+    };
+    const originalFetch = global.fetch;
+    const quoteFetch = jest.fn();
+
+    beforeEach(() => {
+      mockGetSatoshiValue.mockReset();
+      quoteFetch.mockReset();
+      global.fetch = quoteFetch as unknown as typeof fetch;
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    const fillShippingAndConfirm = async () => {
+      fireEvent.click(await screen.findByText(/Zap to Buy/i));
+      for (const [label, value] of [
+        ["Full Name", "User"],
+        ["Street Address", "123 St"],
+        ["City", "City"],
+        ["Postal / Zip Code", "00000"],
+        ["Country", "US"],
+      ]) {
+        fireEvent.change(screen.getByLabelText(label!), {
+          target: { value },
+        });
+      }
+      await act(async () => {
+        fireEvent.click(screen.getByText("Confirm & Zap"));
+      });
+    };
+
+    const mockSellerProfile = () =>
+      mockNostrManager.fetch.mockResolvedValueOnce([
+        {
+          created_at: 100,
+          content: JSON.stringify({ lud16: "seller@alby.com" }),
+        },
+      ]);
+
+    test("shows the price converted to sats", async () => {
+      mockGetSatoshiValue.mockResolvedValue(31000);
+      renderComponent({}, fiatProduct);
+
+      expect(
+        await screen.findByText(/Zap to Buy \(31000 sats\)/i)
+      ).toBeInTheDocument();
+      expect(mockGetSatoshiValue).toHaveBeenCalledWith({
+        amount: 20,
+        currency: "USD",
+      });
+    });
+
+    test("zaps the amount the server converted", async () => {
+      mockGetSatoshiValue.mockResolvedValue(31000);
+      quoteFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ amountSats: 31100, price: 20, currency: "USD" }),
+      });
+      mockSellerProfile();
+      (zapValidator.validateZapReceipt as jest.Mock).mockResolvedValue({
+        valid: true,
+      });
+      renderComponent({}, fiatProduct);
+
+      await fillShippingAndConfirm();
+
+      expect(quoteFetch).toHaveBeenCalledWith(
+        "/api/listing/zapsnag-quote",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ productEvent: fiatProduct.rawEvent }),
+        })
+      );
+      const mockLnInstance = (LightningAddress as unknown as jest.Mock).mock
+        .results[0]!.value;
+      expect(mockLnInstance.zap).toHaveBeenCalledWith(
+        expect.objectContaining({ satoshi: 31100 })
+      );
+      expect(zapValidator.validateZapReceipt).toHaveBeenCalledWith(
+        mockNostrManager,
+        expect.objectContaining({ expectedAmountSats: 31100 })
+      );
+    });
+
+    test("does not zap when the server price moved past the tolerance", async () => {
+      mockGetSatoshiValue.mockResolvedValue(31000);
+      quoteFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ amountSats: 40000, price: 20, currency: "USD" }),
+      });
+      renderComponent({}, fiatProduct);
+
+      await fillShippingAndConfirm();
+
+      expect(window.alert).toHaveBeenCalledWith(
+        expect.stringContaining("The new total is 40000 sats")
+      );
+      expect(LightningAddress).not.toHaveBeenCalled();
+      expect(screen.getByText(/Total: 40000 sats/i)).toBeInTheDocument();
+    });
+
+    test("does not zap when the server cannot convert the price", async () => {
+      mockGetSatoshiValue.mockResolvedValue(31000);
+      quoteFetch.mockResolvedValue({
+        ok: false,
+        json: async () => ({
+          error: "Could not get the current exchange rate",
+        }),
+      });
+      renderComponent({}, fiatProduct);
+
+      await fillShippingAndConfirm();
+
+      expect(window.alert).toHaveBeenCalledWith(
+        "Order failed: Could not get the current exchange rate"
+      );
+      expect(LightningAddress).not.toHaveBeenCalled();
+    });
+
+    test("disables Zap to Buy when the price cannot be converted", async () => {
+      mockGetSatoshiValue.mockRejectedValue(new Error("rates down"));
+      renderComponent({}, fiatProduct);
+
+      const label = await screen.findByText(/Price unavailable/i);
+      expect(label.closest("button")).toBeDisabled();
+    });
+
+    test("counts past sales paid at an older exchange rate", async () => {
+      mockGetSatoshiValue.mockResolvedValue(40000);
+      mockSellerProfile();
+      mockNostrManager.fetch.mockResolvedValueOnce([{ id: "receipt-1" }]);
+      const limitedProduct = { ...fiatProduct, quantity: 3 };
+      renderComponent({}, limitedProduct);
+
+      expect(
+        await screen.findByText(/Zap to Buy \(2 left\)/i)
+      ).toBeInTheDocument();
+      expect(zapValidator.validateSingleReceipt).toHaveBeenCalledWith(
+        { id: "receipt-1" },
+        expect.objectContaining({
+          expectedAmountSats: 30000,
+          allowOverpayment: true,
+        })
+      );
+    });
   });
 });

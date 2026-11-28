@@ -75,4 +75,34 @@ describe("parseZapsnagNote", () => {
 
     expect(result.title).toBe("Flash Sale Item");
   });
+
+  it("reads the price and currency the listing form writes", () => {
+    const cases: [string, number, string][] = [
+      ["Hat\n\nPrice: 20 USD\n\n#zapsnag\n", 20, "USD"],
+      ["Hat\n\nPrice: 12.50 USD\n\n#zapsnag\n", 12.5, "USD"],
+      ["Hat\n\nPrice: 20 GBP\n\n#zapsnag\n", 20, "GBP"],
+      ["Hat\n\nPrice: 1,250.75 EUR\n\n#zapsnag\n", 1250.75, "EUR"],
+      ["Hat\n\nPrice: 5000 SAT\n\n#zapsnag\n", 5000, "sats"],
+      ["Hat\n\nPrice: 5000 SATS\n\n#zapsnag\n", 5000, "sats"],
+    ];
+
+    for (const [content, price, currency] of cases) {
+      const result = parseZapsnagNote(createEvent(content));
+      expect([result.price, result.currency, result.title]).toEqual([
+        price,
+        currency,
+        "Hat",
+      ]);
+    }
+  });
+
+  it("does not read a normal word after the price as a currency", () => {
+    const result = parseZapsnagNote(
+      createEvent("Price: 100 for this hat #zapsnag")
+    );
+
+    expect(result.price).toBe(100);
+    expect(result.currency).toBe("sats");
+    expect(result.title).toBe("for this hat");
+  });
 });
