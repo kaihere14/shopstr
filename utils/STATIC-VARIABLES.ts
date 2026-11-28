@@ -35,6 +35,11 @@ export const SHIPPING_OPTIONS = [
   "Added Cost", // you are going to charge for shipping
 ];
 
+// Listings from this pubkey are hidden from browsing surfaces for everyone but
+// the seller themselves.
+export const HIDDEN_LISTINGS_PUBKEY =
+  "3da2082b7aa5b76a8f0c134deab3f7848c3b5e3a3079c65947d88422b69c1755";
+
 export const SHOPSTRBUTTONCLASSNAMES =
   "text-dark-text dark:text-light-text shadow-lg bg-gradient-to-tr from-shopstr-purple via-shopstr-purple-light to-shopstr-purple min-w-fit dark:from-shopstr-yellow dark:via-shopstr-yellow-light dark:to-shopstr-yellow";
 

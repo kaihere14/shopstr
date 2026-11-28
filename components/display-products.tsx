@@ -9,7 +9,10 @@ import {
 } from "../utils/context/context";
 import ProductCard from "./utility-components/product-card";
 import DisplayProductModal from "./display-product-modal";
-import { SHOPSTRBUTTONCLASSNAMES } from "@/utils/STATIC-VARIABLES";
+import {
+  HIDDEN_LISTINGS_PUBKEY,
+  SHOPSTRBUTTONCLASSNAMES,
+} from "@/utils/STATIC-VARIABLES";
 import { Button, Pagination } from "@heroui/react";
 import ShopstrSpinner from "./utility-components/shopstr-spinner";
 import { useRouter } from "next/router";
@@ -273,8 +276,7 @@ const DisplayProducts = ({
       if (product.images.length === 0) return false;
       if (product.contentWarning) return false;
       if (
-        product.pubkey ===
-          "3da2082b7aa5b76a8f0c134deab3f7848c3b5e3a3079c65947d88422b69c1755" &&
+        product.pubkey === HIDDEN_LISTINGS_PUBKEY &&
         userPubkey !== product.pubkey
       ) {
         return false;

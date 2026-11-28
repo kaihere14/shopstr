@@ -19,6 +19,7 @@ import parseTags, {
 import { parseZapsnagNote } from "@/utils/parsers/zapsnag-parser";
 import CheckoutCard from "../../components/utility-components/checkout-card";
 import ZapsnagButton from "../../components/ZapsnagButton";
+import RelatedProducts from "@/components/related-products";
 import { ProductContext, ProfileMapContext } from "../../utils/context/context";
 import { nip19 } from "nostr-tools";
 import {
@@ -496,16 +497,19 @@ const Listing = ({ initialProductEvent }: ListingPageProps) => {
               <SignInModal isOpen={isOpen} onClose={onClose} />
             </div>
           ) : (
-            <CheckoutCard
-              key={productData.id}
-              productData={productData}
-              setInvoiceIsPaid={setInvoiceIsPaid}
-              setInvoiceGenerationFailed={setInvoiceGenerationFailed}
-              setCashuPaymentSent={setCashuPaymentSent}
-              setCashuPaymentFailed={setCashuPaymentFailed}
-              rawEvent={rawEvent}
-              p2pk={p2pk}
-            />
+            <>
+              <CheckoutCard
+                key={productData.id}
+                productData={productData}
+                setInvoiceIsPaid={setInvoiceIsPaid}
+                setInvoiceGenerationFailed={setInvoiceGenerationFailed}
+                setCashuPaymentSent={setCashuPaymentSent}
+                setCashuPaymentFailed={setCashuPaymentFailed}
+                rawEvent={rawEvent}
+                p2pk={p2pk}
+              />
+              <RelatedProducts currentProduct={productData} />
+            </>
           )
         ) : isListingNotFound ? (
           <div className="flex min-h-[60vh] flex-col items-center justify-center px-6 text-center">
