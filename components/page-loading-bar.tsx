@@ -7,21 +7,39 @@ export default function PageLoadingBar() {
   const [visible, setVisible] = useState(false);
   const [fadeOut, setFadeOut] = useState(false);
 
+  // router.events is one shared emitter, but the router object itself is
+  // replaced on every navigation. Subscribing on [router] tore the listeners
+  // down right after a fast navigation completed, cancelling the hide timer
+  // and leaving the bar stuck part-way.
+  const routerEvents = router.events;
+
   useEffect(() => {
+    let timers: number[] = [];
     let progressTimer: number | null = null;
-    let hideTimer: number | null = null;
+
+    const clearTimers = () => {
+      timers.forEach((timer) => clearTimeout(timer));
+      timers = [];
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+    };
+
+    const schedule = (callback: () => void, delay: number) => {
+      timers.push(window.setTimeout(callback, delay));
+    };
 
     const start = () => {
-      if (hideTimer) clearTimeout(hideTimer);
-      if (progressTimer) clearInterval(progressTimer);
+      clearTimers();
       setFadeOut(false);
       setVisible(true);
       setWidth(0);
 
       // Quickly advance to ~15% then slowly crawl toward 85%
-      setTimeout(() => setWidth(15), 50);
-      setTimeout(() => setWidth(35), 200);
-      setTimeout(() => setWidth(55), 500);
+      schedule(() => setWidth(15), 50);
+      schedule(() => setWidth(35), 200);
+      schedule(() => setWidth(55), 500);
 
       // Slowly inch toward 85% to signal "still loading"
       let current = 55;
@@ -34,12 +52,13 @@ export default function PageLoadingBar() {
     };
 
     const done = () => {
-      if (progressTimer) clearInterval(progressTimer);
+      // Drop pending progress steps so they can't pull the bar back below 100%.
+      clearTimers();
       setWidth(100);
 
-      hideTimer = window.setTimeout(() => {
+      schedule(() => {
         setFadeOut(true);
-        hideTimer = window.setTimeout(() => {
+        schedule(() => {
           setVisible(false);
           setWidth(0);
           setFadeOut(false);
@@ -47,20 +66,17 @@ export default function PageLoadingBar() {
       }, 150);
     };
 
-    const error = () => done();
-
-    router.events.on("routeChangeStart", start);
-    router.events.on("routeChangeComplete", done);
-    router.events.on("routeChangeError", error);
+    routerEvents.on("routeChangeStart", start);
+    routerEvents.on("routeChangeComplete", done);
+    routerEvents.on("routeChangeError", done);
 
     return () => {
-      router.events.off("routeChangeStart", start);
-      router.events.off("routeChangeComplete", done);
-      router.events.off("routeChangeError", error);
-      if (progressTimer) clearInterval(progressTimer);
-      if (hideTimer) clearTimeout(hideTimer);
+      routerEvents.off("routeChangeStart", start);
+      routerEvents.off("routeChangeComplete", done);
+      routerEvents.off("routeChangeError", done);
+      clearTimers();
     };
-  }, [router]);
+  }, [routerEvents]);
 
   if (!visible) return null;
 
